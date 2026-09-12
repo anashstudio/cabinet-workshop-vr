@@ -1,0 +1,79 @@
+name: Build Quest 2 APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  GODOT_TAG: 4.3-stable
+  GODOT_INTERNAL_VERSION: 4.3.stable
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: چک‌اوت پروژه
+        uses: actions/checkout@v4
+
+      - name: نصب جاوا ۱۷
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: ساخت debug keystore برای امضای APK
+        run: |
+          mkdir -p ~/.android
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey \
+            -keypass android -keystore ~/.android/debug.keystore \
+            -storepass android -dname "CN=Android Debug,O=Android,C=US" \
+            -validity 9999 -deststoretype pkcs12
+
+      - name: دانلود اجرایی گودو
+        run: |
+          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_TAG}/Godot_v${GODOT_TAG}_linux.x86_64.zip" -O godot.zip
+          unzip -q godot.zip
+          chmod +x "Godot_v${GODOT_TAG}_linux.x86_64"
+          sudo mv "Godot_v${GODOT_TAG}_linux.x86_64" /usr/local/bin/godot4
+
+      - name: دانلود export templates
+        run: |
+          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_TAG}/Godot_v${GODOT_TAG}_export_templates.tpz" -O templates.tpz
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_INTERNAL_VERSION}"
+          unzip -q templates.tpz -d /tmp/templates_extract
+          cp -r /tmp/templates_extract/templates/* "$HOME/.local/share/godot/export_templates/${GODOT_INTERNAL_VERSION}/"
+
+      - name: نصب افزونه‌ی Godot OpenXR Vendors (لودر واقعی Meta Quest)
+        run: |
+          wget -q "https://github.com/GodotVR/godot_openxr_vendors/releases/download/3.1.2-stable/godotopenxrvendorsaddon.zip" -O openxr_vendors.zip
+          mkdir -p addons
+          unzip -q openxr_vendors.zip "asset/addons/godotopenxrvendors/*" -d /tmp/vendors_extract
+          cp -r /tmp/vendors_extract/asset/addons/godotopenxrvendors addons/godotopenxrvendors
+          ls addons/godotopenxrvendors
+
+      - name: نصب Android Build Template داخل پروژه (لازم برای OpenXR)
+        run: |
+          mkdir -p android
+          unzip -q "$HOME/.local/share/godot/export_templates/${GODOT_INTERNAL_VERSION}/android_source.zip" -d android/build
+          chmod +x android/build/gradlew
+          echo "${GODOT_INTERNAL_VERSION}" > android/.build_version
+
+      - name: ایمپورت اولیه‌ی پروژه
+        run: godot4 --headless --editor --quit --path .
+
+      - name: Export به APK
+        env:
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /home/runner/.android/debug.keystore
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+        run: |
+          mkdir -p build
+          godot4 --headless --verbose --export-debug "Quest Android" build/cabinet-workshop.apk
+
+      - name: آپلود فایل APK به عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cabinet-workshop-quest2-apk
+          path: build/*.apk
+          if-no-files-found: error
